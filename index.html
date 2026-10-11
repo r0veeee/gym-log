@@ -181,6 +181,11 @@ input[type=date].txt{min-height:48px;-webkit-appearance:none;appearance:none}
 .stats.four{grid-template-columns:repeat(4,1fr);gap:8px}
 .stats.four b{font-size:26px}
 .qty{font:600 20px var(--display);white-space:nowrap}
+.icon-btn{position:relative}
+.sdot{position:absolute;top:8px;right:8px;width:11px;height:11px;border-radius:50%;border:2px solid var(--bg);background:var(--muted)}
+.sdot.ok{background:var(--green)}
+.sdot.wait,.sdot.sync{background:var(--yellow)}
+.sdot.err,.sdot.conflict,.sdot.auth{background:var(--danger)}
 .toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);z-index:30;background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:999px;font-size:14px;font-weight:600;opacity:0;pointer-events:none;transition:opacity .15s,transform .15s}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 @media (prefers-reduced-motion: reduce){.sheet{animation:none}.toast{transition:none}}
@@ -229,7 +234,7 @@ function normalize(d){
   };
 }
 let db=(function(){try{const raw=store.get(KEY);if(raw)return normalize(JSON.parse(raw));}catch(e){}return normalize({});})();
-const save=()=>store.set(KEY,JSON.stringify(db));
+const save=()=>{store.set(KEY,JSON.stringify(db));syncDirty();};
 
 /* ---------- helpers ---------- */
 const fmtNum=n=>String(+Number(n).toFixed(2));
@@ -336,7 +341,7 @@ function renderBar(){
     else sub='<span class="sub">'+fmtDayShort(ui.week)+' to '+fmtDayShort(addDays(ui.week,6))+'</span>';
   }
   if(ui.tab==='workout'&&db.active){t=db.active.name;sub='<span class="sub" id="elapsed">'+fmtDur(Date.now()-db.active.start)+'</span>';}
-  $('#bar').innerHTML='<div class="bar-in"><div><h1>'+esc(t)+'</h1>'+sub+'</div><button class="icon-btn" data-a="settings" aria-label="Settings">'+svg('gear')+'</button></div>';
+  $('#bar').innerHTML='<div class="bar-in"><div><h1>'+esc(t)+'</h1>'+sub+'</div><button class="icon-btn" data-a="settings" aria-label="Settings">'+svg('gear')+sdotHtml()+'</button></div>';
 }
 function renderNav(){
   $('#nav').innerHTML='<div class="nav-in">'+TABS.map(t=>'<button data-a="tab" data-t="'+t[0]+'"'+(ui.tab===t[0]?' aria-current="page"':'')+'>'+svg(t[0])+'<span>'+t[1]+'</span></button>').join('')+'</div>';
@@ -805,7 +810,8 @@ function renderSheet(){
   else if(s.type==='tpl')body=tplHtml(s);
   else if(s.type==='rename')body=renameHtml(s);
   else if(s.type==='confirm')body=confirmHtml(s);
-  else if(s.type==='settings')body=settingsHtml();
+  else if(s.type==='settings')body=settingsHtml(s);
+  else if(s.type==='syncConflict')body=syConflictHtml(s);
   else if(s.type==='weight')body=weightSheetHtml(s);
   else if(s.type==='goal')body=goalSheetHtml(s);
   else if(s.type==='product')body=productSheetHtml(s);
@@ -848,12 +854,12 @@ function confirmHtml(s){
   return '<h2>'+esc(s.title)+'</h2><p class="sub" style="font-size:16px;margin-top:8px">'+esc(s.body)+'</p>'+
     '<div class="actions"><button class="btn ghost" data-a="closeSheet">Cancel</button><button class="btn '+(s.danger?'danger-solid':'primary')+'" data-a="confirmOk">'+esc(s.okLabel)+'</button></div>';
 }
-function settingsHtml(){
+function settingsHtml(s){
   const theme=store.get(THEME_KEY)||'auto';
   const data=JSON.stringify({exercises:db.exercises,templates:db.templates,sessions:db.sessions,weights:db.weights,goal:db.goal,products:db.products,meals:db.meals,plan:db.plan,targets:db.targets,shop:db.shop});
   return '<div class="sheet-head"><h2>Settings</h2><button class="btn link" data-a="closeSheet">Done</button></div>'+
     '<h3>Appearance</h3><div class="seg">'+[['auto','Match device'],['light','Light'],['dark','Dark']].map(t=>'<button data-a="theme" data-v="'+t[0]+'" aria-pressed="'+(theme===t[0])+'">'+t[1]+'</button>').join('')+'</div>'+
-    '<h3>Your data</h3><p class="sub" style="font-size:15px">Everything is stored in this browser on this device. Syncing phone and PC comes in a later step, so copy a backup now and then.</p>'+
+    syncSectionHtml(s)+'<h3>Your data</h3><p class="sub" style="font-size:15px">Data is stored in this browser. With sync on, a copy is also kept in your cloud project. You can still copy a backup now and then.</p>'+
     '<label class="lbl" for="exportTxt">Backup</label><textarea id="exportTxt" class="txt mono" rows="4" readonly>'+esc(data)+'</textarea>'+
     '<button class="btn ghost wide gap-top" data-a="copyData">Copy backup</button>'+
     '<label class="lbl" for="importTxt">Restore from a backup</label><textarea id="importTxt" class="txt mono" rows="4" placeholder="Paste a backup here"></textarea>'+
@@ -1044,6 +1050,17 @@ const H={
   },
   goalClear(){db.goal={min:null,max:null};save();ui.sheet=null;render();},
 
+  syIn(el){return syIn(el);},
+  syNow(){toast('Syncing…');syncNow(true);},
+  syOut(){
+    sy={url:sy.url,key:sy.key,email:sy.email,uid:sy.uid,rev:sy.rev||0,dirty:!!sy.dirty,last:sy.last};
+    saveSy();syStatus='off';syMsg='';render();toast('Signed out');
+  },
+  syKeepLocal(){
+    const r=ui.sheet.remote;
+    sy.rev=r.rev;sy.dirty=true;syChange++;saveSy();ui.sheet=null;render();syncNow(true);
+  },
+  syUseCloud(){const r=ui.sheet.remote;ui.sheet=null;syApply(r.data,r.rev);syStatus='ok';sy.last=Date.now();saveSy();updateDot();toast('Cloud data loaded');},
   planView(el){ui.planView=el.dataset.v;render();},
   shopStart(el){db.shop.start=el.dataset.v;save();render();},
   shopDays(el){db.shop.days=Math.max(1,Math.min(14,db.shop.days+ +el.dataset.d));save();render();},
@@ -1236,6 +1253,142 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'&&ui.sheet)closeSheet();
 });
 setInterval(()=>{const el=$('#elapsed');if(el&&db.active)el.textContent=fmtDur(Date.now()-db.active.start);},1000);
+
+/* ---------- cloud sync (Supabase REST, one row per account) ---------- */
+const SYNC_KEY='gymlog.sync';
+let sy=(function(){try{const r=store.get(SYNC_KEY);if(r)return JSON.parse(r)||{};}catch(e){}return {};})();
+let syStatus=(sy.url&&sy.key&&sy.at)?'wait':'off',syMsg='',syTimer=null,syBusy=false,syApplying=false,syChange=0;
+const saveSy=()=>store.set(SYNC_KEY,JSON.stringify(sy));
+const syOn=()=>!!(sy.url&&sy.key&&sy.at);
+const isNetErr=m=>/Failed to fetch|NetworkError|Load failed/i.test(m||'');
+const syPayload=()=>({exercises:db.exercises,templates:db.templates,sessions:db.sessions,weights:db.weights,goal:db.goal,products:db.products,meals:db.meals,plan:db.plan,targets:db.targets,shop:db.shop});
+const syEmptyLocal=()=>!(db.exercises.length||db.templates.length||db.sessions.length||db.weights.length||db.products.length||db.meals.length||Object.keys(db.plan).length);
+function sdotHtml(){return syOn()?'<span class="sdot '+syStatus+'" id="sdot"></span>':'';}
+function syLabel(){
+  if(syStatus==='ok')return 'Synced'+(sy.last?' at '+new Date(sy.last).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'');
+  if(syStatus==='sync')return 'Syncing…';
+  if(syStatus==='wait')return syMsg||'Changes waiting to sync';
+  if(syStatus==='conflict')return 'This device and the cloud both changed. Pick which to keep.';
+  return syMsg||'Not synced';
+}
+function updateDot(){const el=$('#sdot');if(el)el.className='sdot '+syStatus;const st=$('#sy-status');if(st)st.textContent=syLabel();}
+async function syErr(r){let m='Cloud error '+r.status;try{const j=await r.json();m=j.message||j.msg||j.error_description||m;}catch(e){}return m;}
+function applySession(j){
+  sy.at=j.access_token;sy.rt=j.refresh_token;
+  sy.exp=j.expires_at||(Math.floor(Date.now()/1000)+(j.expires_in||3600));
+  if(j.user){sy.uid=j.user.id;sy.email=j.user.email||sy.email;}
+  saveSy();
+}
+async function syRefresh(){
+  const r=await fetch(String(sy.url).replace(/\/+$/,'')+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{apikey:sy.key,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:sy.rt})});
+  if(!r.ok){sy.at=null;saveSy();throw new Error('signed-out');}
+  applySession(await r.json());
+}
+async function syToken(){
+  if(!sy.at)throw new Error('signed-out');
+  if(sy.exp&&sy.exp-Date.now()/1000<60)await syRefresh();
+  return sy.at;
+}
+async function syFetch(path,opts){
+  const o=Object.assign({},opts||{});
+  o.headers=Object.assign({apikey:sy.key,'Content-Type':'application/json',Authorization:'Bearer '+(await syToken())},o.headers||{});
+  return fetch(String(sy.url).replace(/\/+$/,'')+path,o);
+}
+async function syAuth(mode,url,key,email,pw){
+  const base=url.replace(/\/+$/,'');
+  const r=await fetch(base+(mode==='up'?'/auth/v1/signup':'/auth/v1/token?grant_type=password'),{method:'POST',headers:{apikey:key,'Content-Type':'application/json'},body:JSON.stringify({email:email,password:pw})});
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(j.msg||j.error_description||j.message||'Could not sign in');
+  if(!j.access_token)throw new Error('Check your email to confirm the account, then sign in.');
+  const prev=sy;
+  sy={url:base,key:key,email:email,rev:0,dirty:false};
+  applySession(j);
+  if(prev.uid&&prev.uid===sy.uid){sy.rev=prev.rev||0;sy.dirty=!!prev.dirty;saveSy();}
+}
+function syApply(data,rev){
+  syApplying=true;
+  try{db=normalize(Object.assign({},data,{active:db.active}));store.set(KEY,JSON.stringify(db));}finally{syApplying=false;}
+  sy.rev=rev;sy.dirty=false;saveSy();render();
+}
+function syncDirty(){
+  if(syApplying)return;
+  if(sy.uid||syOn()){syChange++;sy.dirty=true;saveSy();}
+  if(!syOn())return;
+  if(syStatus!=='conflict'&&syStatus!=='auth'){syStatus='wait';syMsg='';}
+  updateDot();clearTimeout(syTimer);syTimer=setTimeout(()=>syncNow(),2000);
+}
+async function syncNow(manual,depth){
+  depth=depth||0;
+  if(!syOn()||syBusy)return;
+  if(!navigator.onLine){syStatus='wait';syMsg='Offline. Will sync when you are back online.';updateDot();return;}
+  syBusy=true;syStatus='sync';updateDot();
+  try{
+    const uid=sy.uid;
+    const r=await syFetch('/rest/v1/app_data?select=data,rev,updated_at&user_id=eq.'+uid);
+    if(!r.ok)throw new Error(await syErr(r));
+    const remote=(await r.json())[0]||null;
+    const c0=syChange;
+    if(!remote){
+      const ins=await syFetch('/rest/v1/app_data',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({user_id:uid,data:syPayload(),rev:1})});
+      if(ins.status===409){syBusy=false;await syncNow(manual,depth+1);return;}
+      if(!ins.ok)throw new Error(await syErr(ins));
+      sy.rev=1;sy.dirty=syChange!==c0;
+    }else if(remote.rev>(sy.rev||0)){
+      const clash=(sy.rev||0)===0?!syEmptyLocal():!!sy.dirty;
+      if(clash){
+        syStatus='conflict';
+        if(!ui.sheet||manual){ui.sheet={type:'syncConflict',remote:remote};renderSheet();}
+        return;
+      }
+      const typing=document.activeElement&&/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+      if((ui.sheet||typing)&&!manual){syStatus='wait';syMsg='Update waiting. Finish what you are editing.';return;}
+      syApply(remote.data,remote.rev);
+    }else if(sy.dirty){
+      const pr=await syFetch('/rest/v1/app_data?user_id=eq.'+uid+'&rev=eq.'+sy.rev,{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({data:syPayload(),rev:sy.rev+1,updated_at:new Date().toISOString()})});
+      if(!pr.ok)throw new Error(await syErr(pr));
+      const out=await pr.json();
+      if(!out.length){syBusy=false;if(depth<3){await syncNow(manual,depth+1);return;}throw new Error('Sync is busy. Try again.');}
+      sy.rev=out[0].rev;sy.dirty=syChange!==c0;
+    }
+    if(syStatus==='sync'){syStatus='ok';sy.last=Date.now();syMsg='';}
+    saveSy();
+    if(sy.dirty){clearTimeout(syTimer);syTimer=setTimeout(()=>syncNow(),1500);}
+  }catch(e){
+    if(e&&e.message==='signed-out'){syStatus='auth';syMsg='Signed out. Open Settings to sign in again.';}
+    else{syStatus='err';syMsg=isNetErr(e&&e.message)?'Cannot reach the cloud. Will retry.':((e&&e.message)||'Sync failed');}
+  }finally{syBusy=false;updateDot();}
+}
+async function syIn(el){
+  const s=ui.sheet,mode=el.dataset.v;
+  const v=id=>($('#'+id)||{value:''}).value.trim();
+  const url=v('sy-url'),key=v('sy-key'),email=v('sy-email'),pw=($('#sy-pw')||{value:''}).value;
+  s.tmp={url:url,key:key,email:email};
+  if(!/^https:\/\/.+/.test(url)||!key||!email||!pw){s.err='Fill in all four fields. The URL must start with https://';renderSheet();return;}
+  try{
+    toast(mode==='up'?'Creating account…':'Signing in…');
+    await syAuth(mode,url,key,email,pw);
+    ui.sheet={type:'settings'};render();syncNow(true);
+  }catch(e){s.err=isNetErr(e.message)?'Cannot reach that project URL. Check it and try again.':e.message;renderSheet();}
+}
+function syncSectionHtml(s){
+  if(syOn())return '<h3>Sync</h3><p>Signed in as <strong>'+esc(sy.email||'')+'</strong></p><p class="sub" id="sy-status">'+esc(syLabel())+'</p><div class="actions"><button class="btn ghost" data-a="syNow">Sync now</button><button class="btn danger" data-a="syOut">Sign out</button></div>';
+  const t=(s&&s.tmp)||{url:sy.url||'',key:sy.key||'',email:sy.email||''};
+  const f=(id,l,type,val,ph)=>'<label class="lbl" for="'+id+'">'+l+'</label><input id="'+id+'" class="txt" type="'+type+'" autocomplete="'+(type==='password'?'current-password':'off')+'" autocapitalize="off" spellcheck="false" placeholder="'+ph+'" value="'+esc(val)+'">';
+  return '<h3>Sync</h3><p class="sub" style="font-size:15px">Keeps your phone and PC in step through your own free Supabase project. Enter the same details on each device.</p>'+
+    f('sy-url','Project URL','text',t.url,'https://abcdxyz.supabase.co')+f('sy-key','Publishable key','text',t.key,'sb_publishable_...')+f('sy-email','Email','email',t.email,'you@example.com')+f('sy-pw','Password','password','','')+
+    ((s&&s.err)?'<p class="err">'+esc(s.err)+'</p>':'')+
+    '<div class="actions"><button class="btn primary" data-a="syIn" data-v="in">Sign in</button><button class="btn ghost" data-a="syIn" data-v="up">Create account</button></div>';
+}
+function syConflictHtml(s){
+  const when=s.remote&&s.remote.updated_at?new Date(s.remote.updated_at).toLocaleString():'';
+  return '<h2>Which data do you want to keep?</h2><p class="sub" style="font-size:16px;margin-top:8px">This device and the cloud both have changes'+(when?' (cloud last changed '+esc(when)+')':'')+'. The version you do not pick is replaced.</p>'+
+    '<div class="actions"><button class="btn primary" data-a="syKeepLocal">Keep this device</button><button class="btn ghost" data-a="syUseCloud">Use cloud data</button></div>'+
+    '<button class="btn link wide" data-a="closeSheet">Decide later</button>';
+}
+window.addEventListener('online',()=>syncNow());
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')syncNow();});
+setInterval(()=>{if(document.visibilityState==='visible')syncNow();},120000);
+if(syOn())syncNow();
 
 applyTheme();
 render();
