@@ -85,7 +85,7 @@ strong{font-weight:600}
 .ex{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-m);padding:14px 12px 6px;margin-bottom:14px}
 .ex-head{display:flex;align-items:flex-start;gap:8px;padding:0 4px}
 .sets{margin-top:10px}
-.set-head,.set{display:grid;grid-template-columns:26px 1fr 1fr 52px 30px;gap:8px;align-items:center}
+.set-head,.set{display:grid;grid-template-columns:26px 1fr 1fr 30px;gap:8px;align-items:center}
 .set-head{font-size:13px;color:var(--muted);padding:0 0 4px;text-align:center}
 .set{margin:8px 0;border-radius:var(--r-s)}
 .set-n{font:600 20px var(--display);color:var(--muted);text-align:center}
@@ -362,7 +362,7 @@ function activeHtml(){
   return blocks+
     '<button class="btn ghost wide" data-a="addEx">Add exercise</button>'+
     '<label class="lbl" for="note">Notes</label><textarea id="note" class="txt" rows="2" placeholder="How did it feel?">'+esc(a.note||'')+'</textarea>'+
-    '<p class="sub gap-top">Only ticked sets are saved.</p>'+
+    '<p class="sub gap-top">Sets with reps filled in are saved. Grey numbers are from your last session.</p>'+
     '<div class="actions"><button class="btn primary" data-a="finish">Finish workout</button><button class="btn danger" data-a="discard">Discard</button></div>';
 }
 function exBlock(it,ix,len){
@@ -376,16 +376,16 @@ function exBlock(it,ix,len){
       '<button data-a="moveEx" data-n="'+ix+'" data-d="1"'+(ix===len-1?' disabled':'')+'>Move down</button>'+
       '<button class="dng" data-a="removeEx" data-n="'+ix+'">Remove from workout</button>'+
     '</div></details></div>'+
-    '<div class="sets"><div class="set-head"><span></span><span>kg</span><span>Reps</span><span></span><span></span></div>'+
+    '<div class="sets"><div class="set-head"><span></span><span>kg</span><span>Reps</span><span></span></div>'+
     it.sets.map((s,si)=>setRow(s,ix,si)).join('')+'</div>'+
     '<button class="btn link" data-a="addSet" data-n="'+ix+'">Add set</button></section>';
 }
 function setRow(s,ix,si){
-  return '<div class="set'+(s.done?' done':'')+'" data-ex="'+ix+'" data-set="'+si+'">'+
+  const pw=s.pw!=null?fmtNum(s.pw):'0',pr=s.pr!=null?String(s.pr):'0';
+  return '<div class="set" data-ex="'+ix+'" data-set="'+si+'">'+
     '<span class="set-n">'+(si+1)+'</span>'+
-    '<input class="num" type="text" inputmode="decimal" autocomplete="off" data-f="w" placeholder="0" aria-label="Weight in kg, set '+(si+1)+'" value="'+(s.w==null?'':fmtNum(s.w))+'">'+
-    '<input class="num" type="text" inputmode="numeric" autocomplete="off" data-f="r" placeholder="0" aria-label="Reps, set '+(si+1)+'" value="'+(s.r==null?'':s.r)+'">'+
-    '<button class="tick" data-a="tick" aria-pressed="'+(!!s.done)+'" aria-label="Mark set '+(si+1)+' done">'+svg('check')+'</button>'+
+    '<input class="num" type="text" inputmode="decimal" autocomplete="off" data-f="w" placeholder="'+esc(pw)+'" aria-label="Weight in kg, set '+(si+1)+'" value="'+(s.w==null?'':fmtNum(s.w))+'">'+
+    '<input class="num" type="text" inputmode="numeric" autocomplete="off" data-f="r" placeholder="'+esc(pr)+'" aria-label="Reps, set '+(si+1)+'" value="'+(s.r==null?'':s.r)+'">'+
     '<button class="x" data-a="delSet" aria-label="Remove set '+(si+1)+'">×</button></div>';
 }
 
@@ -537,8 +537,8 @@ function workoutCard(d){
   let h='<h3>Workout</h3>';
   done.forEach(x=>{h+='<div class="row"><div class="grow"><span class="badge">Done</span> <strong>'+esc(x.name)+'</strong><span class="sub">'+Math.max(1,Math.round(((x.end||x.start)-x.start)/60000))+' min</span></div></div>';});
   if(tpl){
-    h+='<div class="row"><div class="grow"><strong>'+esc(tpl.name)+'</strong><span class="sub">'+esc(tpl.items.map(i=>i.name).join(', ')||'No exercises')+'</span></div>'+
-      (isToday?(db.active?'<button class="btn primary sm" data-a="tab" data-t="workout">Continue</button>':'<button class="btn primary sm" data-a="startTpl" data-id="'+tpl.id+'">Start</button>'):'')+'</div>';
+    h+='<div class="row"><div class="grow"><strong>'+esc(tpl.name)+'</strong><span class="sub">'+esc(tpl.items.map(i=>i.name).join(', ')||'No exercises')+'</span></div></div>'+
+      (db.active?'<button class="btn primary wide gap-top" data-a="tab" data-t="workout">Continue workout</button>':'<button class="btn primary wide gap-top" data-a="startTpl" data-id="'+tpl.id+'">'+(isToday?'Start workout':'Start this workout now')+'</button>');
   }else if(w==='rest'){
     h+='<div class="row"><div class="grow"><strong>Rest day</strong></div></div>';
   }else if(!done.length&&!(db.active&&isToday)){
@@ -730,13 +730,21 @@ function mealpickHtml(s){
     '<button class="btn ghost wide gap-top" data-a="mpNew">New meal</button>'+
     '<div class="list gap-top" id="mplist">'+mpList(s)+'</div>';
 }
+function entryItemsHtml(m,e){
+  if(!m||!m.items.length)return '';
+  return '<h3>Products</h3><div class="list">'+m.items.map(it=>{
+    const pr=prodById(it.pid);if(!pr)return '';
+    const amt=it.amt*e.x,mm=prodMacros(pr,amt);
+    return '<div class="row"><div class="grow"><strong>'+esc(pr.name)+'</strong><span class="sub">'+esc(r0(mm.kcal)+' kcal, '+r1(mm.p)+' g protein')+'</span></div><span class="qty">'+esc(fmtQty(pr,amt))+'</span></div>';
+  }).join('')+'</div>';
+}
 function entrySheetHtml(s){
   const e=getEntry(s);
   if(!e)return '<div class="sheet-head"><h2>Meal</h2><button class="btn link" data-a="closeSheet">Close</button></div><p class="sub">This entry no longer exists.</p>';
   const m=mealById(e.mealId),mm=zero();if(m)addM(mm,mealMacros(m),e.x);
   return '<div class="sheet-head"><h2>'+esc(m?m.name:'Deleted meal')+'</h2><button class="btn link" data-a="closeSheet">Done</button></div>'+
     '<div class="trow" style="border:0"><div class="grow"><strong>Servings</strong><span class="sub">Scales the amounts for this day only</span></div><div class="stepper"><button class="sq" data-a="entryServ" data-d="-0.5" aria-label="Fewer servings"'+(e.x<=.5?' disabled':'')+'>−</button><span class="cnt">'+fmtNum(e.x)+'</span><button class="sq" data-a="entryServ" data-d="0.5" aria-label="More servings">+</button></div></div>'+
-    '<div class="stats four">'+macroStatsHtml(mm)+'</div>'+
+    '<div class="stats four">'+macroStatsHtml(mm)+'</div>'+entryItemsHtml(m,e)+
     (m?'<button class="btn ghost wide gap-top" data-a="entryEdit" data-id="'+m.id+'">Edit meal</button>':'')+
     '<button class="btn danger wide gap-top" data-a="entryRemove">Remove from this day</button>';
 }
@@ -872,7 +880,7 @@ function newItem(exId,nSets){
   const ex=exById(exId),last=lastItemFor(exId),lg=last?goodSets(last):[],sets=[];
   for(let i=0;i<(nSets||3);i++){
     const ref=lg.length?(lg[i]||lg[lg.length-1]):null;
-    sets.push({w:ref?ref.w:null,r:ref?ref.r:null,done:false});
+    sets.push({w:null,r:null,pw:ref?ref.w:null,pr:ref?ref.r:null});
   }
   return {exId:exId,name:ex?ex.name:'Exercise',sets:sets};
 }
@@ -916,29 +924,17 @@ const H={
   removeEx(el){db.active.items.splice(+el.dataset.n,1);save();render();},
   addSet(el){
     const it=db.active.items[+el.dataset.n],l=it.sets[it.sets.length-1];
-    it.sets.push({w:l?l.w:null,r:l?l.r:null,done:false});save();render();
+    it.sets.push({w:null,r:null,pw:l?(l.w!=null?l.w:l.pw):null,pr:l?(l.r!=null?l.r:l.pr):null});save();render();
   },
   delSet(el){
     const row=el.closest('.set');
     db.active.items[+row.dataset.ex].sets.splice(+row.dataset.set,1);save();render();
   },
-  tick(el){
-    const row=el.closest('.set');
-    const s=db.active.items[+row.dataset.ex].sets[+row.dataset.set];
-    if(!s.done){
-      if(!(s.r>0)){row.querySelector('[data-f="r"]').focus();toast("Enter the reps first");return;}
-      if(s.w==null){s.w=0;row.querySelector('[data-f="w"]').value='0';}
-    }
-    s.done=!s.done;
-    row.classList.toggle('done',s.done);
-    el.setAttribute('aria-pressed',String(s.done));
-    save();
-  },
   finish(){
     const a=db.active;
-    const items=a.items.map(it=>({exId:it.exId,name:it.name,sets:it.sets.filter(s=>s.done&&s.r>0).map(s=>({w:s.w||0,r:s.r}))})).filter(it=>it.sets.length);
+    const items=a.items.map(it=>({exId:it.exId,name:it.name,sets:it.sets.filter(s=>s.r>0).map(s=>({w:s.w||0,r:s.r}))})).filter(it=>it.sets.length);
     if(!items.length){
-      askConfirm({title:'No sets ticked',body:'There is nothing to save yet. Discard this workout instead?',okLabel:'Discard workout',danger:true,onOk(){db.active=null;save();render();}});
+      askConfirm({title:'No sets filled in',body:'There is nothing to save yet. Discard this workout instead?',okLabel:'Discard workout',danger:true,onOk(){db.active=null;save();render();}});
       return;
     }
     db.sessions.push({id:a.id,name:a.name,start:a.start,end:Date.now(),note:(a.note||'').trim(),items:items});
@@ -1388,6 +1384,14 @@ function syConflictHtml(s){
 window.addEventListener('online',()=>syncNow());
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')syncNow();});
 setInterval(()=>{if(document.visibilityState==='visible')syncNow();},120000);
+let lastToday=todayStr();
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState!=='visible')return;
+  const t=todayStr();if(t===lastToday)return;
+  if(ui.day===lastToday)ui.day=t;
+  if(ui.week===weekStart(lastToday))ui.week=weekStart(t);
+  lastToday=t;render();
+});
 if(syOn())syncNow();
 
 applyTheme();
